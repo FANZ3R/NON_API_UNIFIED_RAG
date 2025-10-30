@@ -17,11 +17,11 @@ load_dotenv()
 
 # Import dependencies with error handling
 try:
-    from openai import OpenAI
-    OPENAI_AVAILABLE = True
+    import requests
+    REQUESTS_AVAILABLE = True
 except ImportError as e:
-    st.error(f"OpenAI import failed: {e}")
-    OPENAI_AVAILABLE = False
+    st.error(f"Requests import failed: {e}")
+    REQUESTS_AVAILABLE = False
 
 try:
     from neo4j import GraphDatabase
@@ -58,8 +58,8 @@ CONFIG = {
         "password": os.getenv('KG_NEO4J_PASSWORD', 'password')
     },
     "llm": {
-        "api_key": os.getenv('OPENROUTER_API_KEY'),
-        "model": "meta-llama/llama-3-70b-instruct"
+        "base_url": os.getenv('LOCAL_LLM_URL', 'http://localhost:11434'),
+        "model": os.getenv('LOCAL_LLM_MODEL', 'llama3')
     }
 }
 
@@ -291,31 +291,31 @@ class KnowledgeGraphSearcher:
         return unique_results[:limit]
 
 def generate_unified_response(query: str, vector_results: List[Dict], kg_results: List[Dict]) -> str:
-    """Generate response using both result types"""
-    
-    if not OPENAI_AVAILABLE or not CONFIG["llm"]["api_key"]:
+    """Generate response using both result types with local LLM"""
+
+    if not REQUESTS_AVAILABLE:
         # Fallback response without LLM
         response_parts = [f"Query: {query}\n"]
-        
+
         if vector_results:
             response_parts.append("=== Content Search Results ===")
             for i, result in enumerate(vector_results[:3], 1):
                 response_parts.append(f"[{i}] {result['header']} (Score: {result['score']:.3f})")
                 response_parts.append(f"    {result['content'][:200]}...\n")
-        
+
         if kg_results:
             response_parts.append("=== Knowledge Graph Results ===")
             for i, result in enumerate(kg_results[:3], 1):
                 response_parts.append(f"[{i}] {result['relationship_text']} (Confidence: {result['confidence']:.3f})\n")
-        
+
         if not vector_results and not kg_results:
             response_parts.append("No relevant information found in either system.")
-        
+
         return "\n".join(response_parts)
-    
+
     # Format context for LLM
     context_parts = []
-    
+
     if vector_results:
         context_parts.append("=== CONTENT SIMILARITY RESULTS ===")
         for i, result in enumerate(vector_results[:5], 1):
@@ -324,16 +324,16 @@ def generate_unified_response(query: str, vector_results: List[Dict], kg_results
             context_parts.append(f"Header: {result['header']}")
             context_parts.append(f"Content: {result['content'][:400]}...")
             context_parts.append("")
-    
+
     if kg_results:
         context_parts.append("=== KNOWLEDGE GRAPH RELATIONSHIPS ===")
         for i, result in enumerate(kg_results[:5], 1):
             context_parts.append(f"[Relationship {i}] Confidence: {result['confidence']:.3f}")
             context_parts.append(f"Connection: {result['relationship_text']}")
             context_parts.append("")
-    
+
     context_text = "\n".join(context_parts) if context_parts else "No relevant information found."
-    
+
     prompt = f"""You are an AI assistant with access to both content similarity search and knowledge graph data.
 
 User Question: {query}
@@ -347,34 +347,47 @@ Instructions:
 3. Provide a clear, informative response combining both sources when available
 
 Provide a clear response:"""
-    
+
     try:
-        client = OpenAI(
-            api_key=CONFIG["llm"]["api_key"],
-            base_url="https://openrouter.ai/api/v1"
+        # Call local Ollama API
+        response = requests.post(
+            f"{CONFIG['llm']['base_url']}/api/generate",
+            json={
+                "model": CONFIG["llm"]["model"],
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.3,
+                    "num_predict": 1000
+                }
+            },
+            timeout=60
         )
-        
-        response = client.chat.completions.create(
-            model=CONFIG["llm"]["model"],
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=1000
-        )
-        return response.choices[0].message.content
-        
+
+        if response.status_code == 200:
+            result = response.json()
+            return result.get("response", "No response generated")
+        else:
+            error_msg = f"LLM API returned status {response.status_code}: {response.text}"
+            logger.error(error_msg)
+            return f"I found information but encountered an error generating the response: {error_msg}"
+
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"Failed to connect to local LLM: {e}")
+        return f"I found information but couldn't connect to the local LLM. Make sure Ollama is running (http://localhost:11434). Error: {e}"
     except Exception as e:
         logger.error(f"LLM response generation failed: {e}")
         return f"I found information but encountered an error generating the response: {e}"
 
 # Streamlit UI
 st.set_page_config(
-    page_title="Fixed Unified RAG Chatbot", 
+    page_title="Unified RAG Chatbot (Local LLM)",
     page_icon="🔗",
     layout="wide"
 )
 
-st.title("🔗 Fixed Unified Vector + Knowledge Graph Chatbot")
-st.caption("Using exact configuration from your working Qdrant project")
+st.title("🔗 Unified Vector + Knowledge Graph Chatbot with Local LLM")
+st.caption("Using local Llama 3 model via Ollama")
 
 # Debug information
 with st.expander("🔧 Debug Information - Environment Variables", expanded=False):
@@ -388,10 +401,14 @@ with st.expander("🔧 Debug Information - Environment Variables", expanded=Fals
     st.code(f"KG_NEO4J_USERNAME: {os.getenv('KG_NEO4J_USERNAME', 'Not set')}")
     
     st.write("**Dependencies:**")
-    st.write(f"OpenAI: {OPENAI_AVAILABLE}")
+    st.write(f"Requests: {REQUESTS_AVAILABLE}")
     st.write(f"Neo4j: {NEO4J_AVAILABLE}")
     st.write(f"Qdrant: {QDRANT_AVAILABLE}")
     st.write(f"SentenceTransformers: {SENTENCE_TRANSFORMERS_AVAILABLE}")
+
+    st.write("**Local LLM Configuration:**")
+    st.code(f"LOCAL_LLM_URL: {CONFIG['llm']['base_url']}")
+    st.code(f"LOCAL_LLM_MODEL: {CONFIG['llm']['model']}")
 
 # Initialize searchers
 @st.cache_resource
@@ -434,11 +451,20 @@ with st.sidebar:
         if kg_searcher.error_message:
             st.error(kg_searcher.error_message)
     
-    # LLM status
-    if CONFIG["llm"]["api_key"]:
-        st.success("✅ LLM API Key Set")
-    else:
-        st.warning("⚠️ LLM API Key Missing (will use fallback)")
+    # LLM status - test connection to local Ollama
+    try:
+        response = requests.get(f"{CONFIG['llm']['base_url']}/api/tags", timeout=2)
+        if response.status_code == 200:
+            models = response.json().get('models', [])
+            model_names = [m.get('name', '') for m in models]
+            if CONFIG['llm']['model'] in model_names or any(CONFIG['llm']['model'] in name for name in model_names):
+                st.success(f"✅ Local LLM Connected ({CONFIG['llm']['model']})")
+            else:
+                st.warning(f"⚠️ Model '{CONFIG['llm']['model']}' not found. Available: {', '.join(model_names[:3])}")
+        else:
+            st.error("❌ Local LLM API Error")
+    except:
+        st.warning("⚠️ Local LLM Not Connected (will use fallback)")
     
     st.divider()
     
@@ -562,34 +588,41 @@ if prompt := st.chat_input("Ask about your business data..."):
 # Instructions
 with st.expander("💡 Configuration Guide"):
     st.markdown("""
-    **Your .env file should have these exact variables (from your working Qdrant project):**
-    
+    **Your .env file should have these variables:**
+
     ```bash
-    # Vector System (note the variable names!)
+    # Vector System
     QDRANT_URL=http://localhost:6333
     DEFAULT_COLLECTION_NAME=test_business_data
     LOCAL_EMBEDDING_MODEL=all-MiniLM-L6-v2
-    
-    # Knowledge Graph System  
+
+    # Knowledge Graph System
     KG_NEO4J_URI=bolt://localhost:7688
     KG_NEO4J_USERNAME=neo4j
     KG_NEO4J_PASSWORD=password
-    
-    # LLM Configuration
-    OPENROUTER_API_KEY=your_api_key
-    
-    # Other settings from your working project
+
+    # Local LLM Configuration (Ollama)
+    LOCAL_LLM_URL=http://localhost:11434
+    LOCAL_LLM_MODEL=llama3
+
+    # Other settings
     CHUNK_SIZE=500
     CHUNK_OVERLAP=50
     BATCH_SIZE=32
     ```
-    
-    **Key differences fixed:**
-    - Using `QDRANT_URL` instead of `VECTOR_QDRANT_URL`
-    - Using `DEFAULT_COLLECTION_NAME` instead of `VECTOR_COLLECTION_NAME`
-    - Using the exact same embedding model initialization as your working project
-    - Using the same Qdrant client configuration
+
+    **To run local Llama 3 with Ollama:**
+    1. Install Ollama: https://ollama.ai/download
+    2. Pull Llama 3 model: `ollama pull llama3`
+    3. Verify it's running: `ollama list`
+    4. The API will be available at http://localhost:11434
+
+    **Alternative LLM Models:**
+    - `llama3:8b` - Llama 3 8B (faster, less memory)
+    - `llama3:70b` - Llama 3 70B (better quality, more memory)
+    - `llama3.1` - Llama 3.1 with extended context
+    - Run `ollama list` to see your available models
     """)
 
 st.markdown("---")
-st.caption("Fixed version using exact configuration from your working Qdrant project")
+st.caption("Unified RAG Chatbot using local Llama 3 model via Ollama")

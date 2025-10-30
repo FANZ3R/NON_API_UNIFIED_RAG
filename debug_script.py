@@ -1,6 +1,6 @@
 """
-Fixed Debug script to test components individually
-Updated to match your actual .env file variable names
+Debug script to test components individually
+Updated to use local Llama 3 model via Ollama instead of OpenRouter API
 """
 
 import os
@@ -19,10 +19,10 @@ def test_imports():
         print(f"❌ Streamlit missing: {e}")
     
     try:
-        from openai import OpenAI
-        print("✅ OpenAI available")
+        import requests
+        print("✅ Requests available")
     except ImportError as e:
-        print(f"❌ OpenAI missing: {e}")
+        print(f"❌ Requests missing: {e}")
     
     try:
         from neo4j import GraphDatabase
@@ -43,29 +43,41 @@ def test_imports():
         print(f"❌ SentenceTransformers missing: {e}")
 
 def test_environment():
-    """Test environment variables - UPDATED TO MATCH YOUR .env FILE"""
+    """Test environment variables"""
     print("\n🔍 Testing environment variables...")
-    
-    # Updated to match your actual .env file
+
     required_vars = [
-        'QDRANT_URL',                    # Not VECTOR_QDRANT_URL
-        'DEFAULT_COLLECTION_NAME',       # Not VECTOR_COLLECTION_NAME  
-        'LOCAL_EMBEDDING_MODEL',         # Not VECTOR_EMBEDDING_MODEL
+        'QDRANT_URL',
+        'DEFAULT_COLLECTION_NAME',
+        'LOCAL_EMBEDDING_MODEL',
         'KG_NEO4J_URI',
         'KG_NEO4J_USERNAME',
-        'KG_NEO4J_PASSWORD',
-        'OPENROUTER_API_KEY'
+        'KG_NEO4J_PASSWORD'
     ]
-    
+
+    optional_vars = [
+        'LOCAL_LLM_URL',
+        'LOCAL_LLM_MODEL'
+    ]
+
     for var in required_vars:
         value = os.getenv(var)
         if value:
-            if 'PASSWORD' in var or 'KEY' in var:
+            if 'PASSWORD' in var:
                 print(f"✅ {var}: {'*' * 10}")
             else:
                 print(f"✅ {var}: {value}")
         else:
             print(f"❌ {var}: Not set")
+
+    print("\nOptional variables:")
+    for var in optional_vars:
+        value = os.getenv(var)
+        if value:
+            print(f"✅ {var}: {value}")
+        else:
+            default = 'http://localhost:11434' if 'URL' in var else 'llama3'
+            print(f"ℹ️  {var}: Not set (will use default: {default})")
 
 def test_vector_connection():
     """Test Qdrant connection - UPDATED VARIABLE NAMES"""
@@ -127,30 +139,68 @@ def test_kg_connection():
         return False
 
 def test_llm_setup():
-    """Test LLM setup"""
-    print("\n🔍 Testing LLM setup...")
-    
-    api_key = os.getenv('OPENROUTER_API_KEY')
-    if not api_key:
-        print("❌ OPENROUTER_API_KEY not set")
-        return False
-    
-    if not api_key.startswith('sk-or-v1-'):
-        print("❌ OPENROUTER_API_KEY doesn't look correct (should start with 'sk-or-v1-')")
-        return False
-    
-    print("✅ OpenRouter API key is set and looks correct")
-    
+    """Test local LLM setup (Ollama)"""
+    print("\n🔍 Testing local LLM setup (Ollama)...")
+
     try:
-        from openai import OpenAI
-        client = OpenAI(
-            api_key=api_key,
-            base_url="https://openrouter.ai/api/v1"
-        )
-        print("✅ OpenAI client initialized successfully")
-        return True
+        import requests
+
+        base_url = os.getenv('LOCAL_LLM_URL', 'http://localhost:11434')
+        model_name = os.getenv('LOCAL_LLM_MODEL', 'llama3')
+
+        # Test connection to Ollama
+        response = requests.get(f"{base_url}/api/tags", timeout=5)
+
+        if response.status_code == 200:
+            print(f"✅ Connected to Ollama at {base_url}")
+
+            models_data = response.json()
+            models = models_data.get('models', [])
+            model_names = [m.get('name', '') for m in models]
+
+            print(f"   Available models: {', '.join(model_names)}")
+
+            # Check if the configured model is available
+            if model_name in model_names or any(model_name in name for name in model_names):
+                print(f"✅ Model '{model_name}' is available")
+
+                # Test a simple generation
+                print(f"   Testing generation with {model_name}...")
+                test_response = requests.post(
+                    f"{base_url}/api/generate",
+                    json={
+                        "model": model_name,
+                        "prompt": "Say 'test successful' and nothing else.",
+                        "stream": False,
+                        "options": {"num_predict": 10}
+                    },
+                    timeout=30
+                )
+
+                if test_response.status_code == 200:
+                    result = test_response.json()
+                    print(f"✅ Test generation successful: {result.get('response', '')[:50]}...")
+                    return True
+                else:
+                    print(f"❌ Test generation failed: {test_response.status_code}")
+                    return False
+            else:
+                print(f"❌ Model '{model_name}' not found in available models")
+                print(f"   Run: ollama pull {model_name}")
+                return False
+        else:
+            print(f"❌ Failed to connect to Ollama: HTTP {response.status_code}")
+            return False
+
+    except requests.exceptions.ConnectionError:
+        print(f"❌ Cannot connect to Ollama at {base_url}")
+        print("   Make sure Ollama is running:")
+        print("   - Install: https://ollama.ai/download")
+        print("   - Start: The Ollama app should be running")
+        print("   - Verify: Run 'ollama list' in terminal")
+        return False
     except Exception as e:
-        print(f"❌ OpenAI client initialization failed: {e}")
+        print(f"❌ LLM setup test failed: {e}")
         return False
 
 def test_sentence_transformers():
@@ -181,41 +231,47 @@ def test_sentence_transformers():
         return False
 
 def main():
-    print("🚀 FIXED UNIFIED CHATBOT DEBUGGING")
+    print("🚀 UNIFIED CHATBOT DEBUGGING (Local LLM)")
     print("=" * 50)
-    
+
     test_imports()
     test_environment()
-    
+
     vector_ok = test_vector_connection()
     kg_ok = test_kg_connection()
     llm_ok = test_llm_setup()
     st_ok = test_sentence_transformers()
-    
+
     print("\n📊 SUMMARY")
     print("=" * 20)
     print(f"Vector System: {'✅' if vector_ok else '❌'}")
     print(f"Knowledge Graph: {'✅' if kg_ok else '❌'}")
-    print(f"LLM Setup: {'✅' if llm_ok else '❌'}")
+    print(f"Local LLM (Ollama): {'✅' if llm_ok else '❌'}")
     print(f"SentenceTransformers: {'✅' if st_ok else '❌'}")
-    
+
     if vector_ok and kg_ok and llm_ok and st_ok:
         print("\n🎉 All systems ready! You can run:")
         print("streamlit run unified_chatbot.py")
     else:
         print("\n🔧 Fix the issues above before running the unified chatbot")
-        
+
         if not vector_ok:
             print("\nVector system fixes:")
             print("- Make sure Qdrant is running: docker-compose up -d")
             print("- Check DEFAULT_COLLECTION_NAME matches your actual collection")
-            
+
         if not kg_ok:
             print("\nKnowledge graph fixes:")
             print("- Make sure Neo4j is running")
             print("- Check KG_NEO4J_PASSWORD is correct")
             print("- Verify your data was imported successfully")
-            
+
+        if not llm_ok:
+            print("\nLocal LLM fixes:")
+            print("- Install Ollama: https://ollama.ai/download")
+            print("- Pull Llama 3: ollama pull llama3")
+            print("- Check if Ollama is running: ollama list")
+
         if not st_ok:
             print("\nSentenceTransformers fixes:")
             print("- Install: pip install sentence-transformers")

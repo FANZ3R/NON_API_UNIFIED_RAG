@@ -376,9 +376,9 @@ Scalability:
 - For very high throughput, separate responsibilities into microservices:
     - ingestion pipeline (embeddings -> vector DB)
     - search service (this module)
-    - LLM service (wraps calls to OpenAI/OpenRouter)
+    - LLM service (wraps calls to local Ollama/Llama 3)
     - KG service (Neo4j / query microservice)
-- Use batching for embedding and search calls where possible to reduce API overhead.
+- Use batching for embedding and search calls where possible to reduce overhead.
 
 """
 
