@@ -53,7 +53,7 @@ CONFIG = {
         "embedding_model": os.getenv('LOCAL_EMBEDDING_MODEL', 'all-MiniLM-L6-v2')
     },
     "kg": {
-        "neo4j_uri": os.getenv('KG_NEO4J_URI', 'bolt://localhost:7688'),
+        "neo4j_uri": os.getenv('KG_NEO4J_URI', 'bolt://localhost:7687'),
         "username": os.getenv('KG_NEO4J_USERNAME', 'neo4j'),
         "password": os.getenv('KG_NEO4J_PASSWORD', 'password')
     },
@@ -597,7 +597,7 @@ with st.expander("💡 Configuration Guide"):
     LOCAL_EMBEDDING_MODEL=all-MiniLM-L6-v2
 
     # Knowledge Graph System
-    KG_NEO4J_URI=bolt://localhost:7688
+    KG_NEO4J_URI=bolt://localhost:7687
     KG_NEO4J_USERNAME=neo4j
     KG_NEO4J_PASSWORD=password
 

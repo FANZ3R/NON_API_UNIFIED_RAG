@@ -10,7 +10,7 @@ load_dotenv()
 print("Testing Neo4j Connection...")
 print("=" * 50)
 
-uri = os.getenv('KG_NEO4J_URI', 'bolt://localhost:7688')
+uri = os.getenv('KG_NEO4J_URI', 'bolt://localhost:7687')
 username = os.getenv('KG_NEO4J_USERNAME', 'neo4j')
 password = os.getenv('KG_NEO4J_PASSWORD')
 
@@ -53,5 +53,5 @@ except Exception as e:
     print("Common issues:")
     print("1. Wrong password - check your .env file")
     print("2. Neo4j not running - start your Neo4j server")
-    print("3. Wrong port - verify Neo4j is on port 7688 (or update KG_NEO4J_URI)")
+    print("3. Wrong port - verify Neo4j is on port 7687 (or update KG_NEO4J_URI)")
     exit(1)
